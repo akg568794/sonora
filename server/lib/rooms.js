@@ -12,10 +12,11 @@ const ADVANCE_GRACE_MS = 250;
 // listener whose broadcast arrives after the moment has passed just falls back
 // to the old catch-up correction, so this only ever helps.
 const PLAY_LEAD_MS = 500;
-// A client's own 'ended' event is only trusted once we're already close to the
-// scheduled end (stored duration is an estimate, not ground truth) — this stops
-// a stray event, or a bad actor, from skipping a track early for everyone.
-const ENDED_REPORT_TOLERANCE_MS = 4000;
+// A guard against an implausible, near-instant 'ended' report (a stray event
+// or a bad actor) — anything past this is trusted, since a real 'ended' event
+// is stronger evidence than our stored (file-metadata-derived) duration
+// estimate, which is sometimes a few seconds off from the real playable length.
+const MIN_PLAYED_BEFORE_END_MS = 3000;
 
 export const now = () => Date.now();
 
@@ -238,10 +239,7 @@ class Room {
    */
   reportEnded(qid) {
     if (!qid || qid !== this.currentQid || !this.isPlaying) return false;
-    const duration = this.current?.duration;
-    if (!duration || !Number.isFinite(duration)) return false;
-    const expectedEnd = this.startedAt + Math.max(0, duration - this.positionAtStart) * 1000;
-    if (now() < expectedEnd - ENDED_REPORT_TOLERANCE_MS) return false;
+    if (now() - this.startedAt < MIN_PLAYED_BEFORE_END_MS) return false;
     this.next({ auto: true });
     return true;
   }
