@@ -249,13 +249,13 @@ function RoomHeader({ room, identity, onLeave, onOpenSettings }) {
   };
 
   return (
-    <header className="glass-strong sticky top-0 z-40 flex flex-wrap items-center gap-x-4 gap-y-3 border-x-0 border-t-0 px-4 py-3 sm:px-6">
-      <button onClick={onLeave} className="btn-icon h-9 w-9 shrink-0" aria-label="Leave room">
-        <ChevronLeft size={20} />
-      </button>
+    <header className="glass-strong sticky top-0 z-40 border-x-0 border-t-0 px-4 py-3 sm:px-6">
+      <div className="flex items-center gap-3">
+        <button onClick={onLeave} className="btn-icon h-9 w-9 shrink-0" aria-label="Leave room">
+          <ChevronLeft size={20} />
+        </button>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <h1 className="truncate text-[16px] font-semibold tracking-tight">{room.name}</h1>
           {!room.connected && (
             <span className="flex shrink-0 items-center gap-1 rounded-pill bg-[#ff9f0a]/18 px-2 py-0.5 text-[10.5px] font-semibold text-[#ff9f0a]">
@@ -263,53 +263,58 @@ function RoomHeader({ room, identity, onLeave, onOpenSettings }) {
             </span>
           )}
         </div>
-        <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-white/40">
-          {room.allowGuestControl ? <Unlock size={11} /> : <Lock size={11} />}
-          {room.allowGuestControl ? 'Everyone can control' : 'Host controls playback'}
-          <span className="text-white/20">·</span>
-          {pluralize(room.queue.length, 'track')}
+
+        <div className="hidden md:block">
+          <ListenerRail
+            listeners={room.listeners}
+            hostId={room.hostId}
+            youId={identity.id}
+            isPlaying={room.playback.isPlaying}
+            max={6}
+          />
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <Tooltip label="Room settings">
+            <button onClick={onOpenSettings} className="btn-icon h-9 w-9" aria-label="Room settings">
+              <Settings2 size={17} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Leave room">
+            <button onClick={onLeave} className="btn-icon h-9 w-9 hover:!text-accent-soft" aria-label="Leave room">
+              <LogOut size={16} />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="mt-2 flex items-center justify-between gap-3 pl-[calc(2.25rem+0.75rem)]">
+        <p className="flex min-w-0 items-center gap-1.5 truncate text-[12px] text-white/40">
+          {room.allowGuestControl ? <Unlock size={11} className="shrink-0" /> : <Lock size={11} className="shrink-0" />}
+          <span className="truncate">
+            {room.allowGuestControl ? 'Everyone can control' : 'Host controls playback'}
+          </span>
+          <span className="hidden shrink-0 text-white/20 sm:inline">·</span>
+          <span className="hidden shrink-0 sm:inline">{pluralize(room.queue.length, 'track')}</span>
         </p>
-      </div>
 
-      <div className="order-3 flex w-full items-center gap-2 sm:order-none sm:w-auto">
-        <Tooltip label="Copy room code">
-          <button onClick={() => copy('code')} className="btn btn-glass h-9 !gap-1.5 !px-3">
-            <span className="tnum text-[13.5px] font-semibold tracking-[0.1em]">{room.code}</span>
-            {copied === 'code' ? (
-              <Check size={13} className="text-[#30d158]" strokeWidth={3} />
-            ) : (
-              <Copy size={13} className="text-white/45" />
-            )}
-          </button>
-        </Tooltip>
-        <Tooltip label="Copy invite link">
-          <button onClick={() => copy('link')} className="btn-icon h-9 w-9" aria-label="Copy invite link">
-            {copied === 'link' ? <Check size={15} className="text-[#30d158]" /> : <Link2 size={15} />}
-          </button>
-        </Tooltip>
-      </div>
-
-      <div className="hidden md:block">
-        <ListenerRail
-          listeners={room.listeners}
-          hostId={room.hostId}
-          youId={identity.id}
-          isPlaying={room.playback.isPlaying}
-          max={6}
-        />
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1">
-        <Tooltip label="Room settings">
-          <button onClick={onOpenSettings} className="btn-icon h-9 w-9" aria-label="Room settings">
-            <Settings2 size={17} />
-          </button>
-        </Tooltip>
-        <Tooltip label="Leave room">
-          <button onClick={onLeave} className="btn-icon h-9 w-9 hover:!text-accent-soft" aria-label="Leave room">
-            <LogOut size={16} />
-          </button>
-        </Tooltip>
+        <div className="flex shrink-0 items-center gap-2">
+          <Tooltip label="Copy room code">
+            <button onClick={() => copy('code')} className="btn btn-glass h-8 !gap-1.5 !px-2.5">
+              <span className="tnum text-[13px] font-semibold tracking-[0.1em]">{room.code}</span>
+              {copied === 'code' ? (
+                <Check size={12} className="text-[#30d158]" strokeWidth={3} />
+              ) : (
+                <Copy size={12} className="text-white/45" />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip label="Copy invite link">
+            <button onClick={() => copy('link')} className="btn-icon h-8 w-8" aria-label="Copy invite link">
+              {copied === 'link' ? <Check size={14} className="text-[#30d158]" /> : <Link2 size={14} />}
+            </button>
+          </Tooltip>
+        </div>
       </div>
     </header>
   );
@@ -382,7 +387,7 @@ export function RoomScreen({ room, identity, tracks, onTracksChanged, audio, rea
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6, delay: 0.1, ease: [0.32, 0.72, 0, 1] }}
-          className="glass glass-sheen flex h-[min(680px,calc(100vh-140px))] min-h-[420px] flex-col overflow-hidden rounded-panel lg:sticky lg:top-[96px]"
+          className="glass glass-sheen flex h-[min(56svh,460px)] min-h-[320px] flex-col overflow-hidden rounded-panel lg:h-[min(680px,calc(100svh-140px))] lg:min-h-[420px] lg:sticky lg:top-[96px]"
         >
           <div className="p-3 pb-0">
             <div className="flex gap-0.5 rounded-pill bg-black/25 p-0.5">

@@ -246,7 +246,9 @@ export function NowPlaying({
       </div>
 
       {/* ----------------------------------------------------------- scrubber */}
-      <div className="mt-6 w-full max-w-[420px]">
+      {/* `overflow-hidden` pins this to a fixed box regardless of how wide the
+          hh:mm:ss labels get on a long track. */}
+      <div className="mt-6 w-full max-w-[420px] overflow-hidden">
         <Slider
           value={Math.min(position, duration || 0)}
           max={duration || 1}
@@ -254,9 +256,9 @@ export function NowPlaying({
           ariaLabel="Seek"
           onCommit={(next) => actions.seek(next)}
         />
-        <div className="mt-1.5 flex justify-between text-[11px] text-white/40">
-          <span className="tnum">{formatTime(position)}</span>
-          <span className="tnum">{formatRemaining(position, duration)}</span>
+        <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-white/40">
+          <span className="tnum shrink-0">{formatTime(position)}</span>
+          <span className="tnum shrink-0">{formatRemaining(position, duration)}</span>
         </div>
       </div>
 

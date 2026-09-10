@@ -73,7 +73,7 @@ export function ReactionBar({ onReact, className = '' }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.94 }}
             transition={{ type: 'spring', stiffness: 500, damping: 32 }}
-            className="glass-strong absolute bottom-full right-0 z-20 mb-2 flex items-center gap-1 rounded-pill p-1.5"
+            className="glass-strong absolute bottom-full left-1/2 z-20 mb-2 flex -translate-x-1/2 flex-col items-center gap-1 rounded-[20px] p-1.5"
           >
             {emojis.map((emoji, i) => (
               <motion.button

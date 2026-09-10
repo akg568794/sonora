@@ -1,7 +1,7 @@
 import { customAlphabet, nanoid } from 'nanoid';
 
-// No 0/O/1/I/L — room codes get read aloud and typed by hand.
-const roomCode = customAlphabet('ABCDEFGHJKMNPQRSTUVWXYZ23456789', 6);
+// Digits only, read aloud and typed on a numeric keypad just as easily.
+const roomCode = customAlphabet('0123456789', 6);
 
 const CHAT_HISTORY = 200;
 const ADVANCE_GRACE_MS = 250;
