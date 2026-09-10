@@ -9,10 +9,15 @@ export default defineConfig({
     port: 5173,
     // Bind on all interfaces so you can open the room on your phone over wifi.
     host: true,
+    // Vite 6 rejects unrecognised Host headers by default; hosted preview/tunnel domains need this.
+    allowedHosts: true,
     proxy: {
       '/api': { target: API_TARGET, changeOrigin: true },
       '/media': { target: API_TARGET, changeOrigin: true },
       '/socket.io': { target: API_TARGET, ws: true, changeOrigin: true },
     },
+  },
+  preview: {
+    allowedHosts: true,
   },
 });
