@@ -141,8 +141,7 @@ export function QueuePanel({
               : `${pluralize(upcoming, 'track')} · ${formatTime(totalRemaining)} left`}
           </p>
         </div>
-        {/* The laptop layout has an inline search above NowPlaying instead. */}
-        <button onClick={onBrowse} className="btn btn-glass h-8 px-3 text-[12.5px] lg:hidden">
+        <button onClick={onBrowse} className="btn btn-glass h-8 px-3 text-[12.5px]">
           <Plus size={14} strokeWidth={2.5} />
           Add
         </button>

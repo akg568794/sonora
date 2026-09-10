@@ -346,11 +346,19 @@ export function useSyncedAudio({ playback, track, nextTrack, volume = 1, muted =
     navigator.mediaSession.playbackState = playback?.isPlaying ? 'playing' : 'paused';
   }, [track, playback?.isPlaying]);
 
-  // Release everything only when the hook itself goes away.
+  // Release everything only when the hook itself goes away. Clearing the refs
+  // (not just closing the context) matters under StrictMode's dev-only
+  // mount→cleanup→mount double-invoke: without it, `getContext()`'s early
+  // `if (ctxRef.current) return ctxRef.current` would hand back the now-closed
+  // context to the real mount instead of creating a fresh one, silently
+  // breaking all playback.
   useEffect(
     () => () => {
       stopSource();
       ctxRef.current?.close().catch(() => {});
+      ctxRef.current = null;
+      gainRef.current = null;
+      analyserRef.current = null;
     },
     [stopSource]
   );
