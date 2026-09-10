@@ -32,6 +32,10 @@ const io = new Server(server, { cors: { origin: true, credentials: true } });
 
 app.use(express.json());
 
+// Backdrop chrome (laptop/tablet/mobile) and any legacy local track files ship
+// from here — the SPA fallback below already carves `/media` out for this.
+app.use('/media', express.static(path.join(__dirname, 'uploads')));
+
 app.use('/api', createLibraryRouter({ store }));
 app.get('/api/rooms', (_req, res) => res.json({ rooms: rooms.list() }));
 app.get('/api/health', (_req, res) => res.json({ ok: true, tracks: store.listTracks().length }));
