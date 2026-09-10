@@ -69,11 +69,15 @@ export function ReactionBar({ onReact, className = '' }) {
       <AnimatePresence>
         {expanded && (
           <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.94 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.94 }}
+            // `x` is animated here (not a Tailwind `-translate-x-1/2` class) because
+            // Framer Motion writes its own inline `transform` for y/scale, which would
+            // otherwise silently overwrite a class-based translateX and re-introduce
+            // the off-centre/overflow bug.
+            initial={{ opacity: 0, y: 8, scale: 0.94, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
+            exit={{ opacity: 0, y: 8, scale: 0.94, x: '-50%' }}
             transition={{ type: 'spring', stiffness: 500, damping: 32 }}
-            className="glass-strong absolute bottom-full left-1/2 z-20 mb-2 flex -translate-x-1/2 flex-col items-center gap-1 rounded-[20px] p-1.5"
+            className="glass-strong absolute bottom-full left-1/2 z-20 mb-2 flex flex-col items-center gap-1 rounded-[20px] p-1.5"
           >
             {emojis.map((emoji, i) => (
               <motion.button
@@ -82,7 +86,10 @@ export function ReactionBar({ onReact, className = '' }) {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.3 }}
                 transition={{ delay: i * 0.022, type: 'spring', stiffness: 500, damping: 26 }}
-                onClick={() => onReact(emoji)}
+                onClick={() => {
+                  onReact(emoji);
+                  setExpanded(false);
+                }}
                 aria-label={`React ${emoji}`}
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[19px] transition-transform duration-150 ease-spring hover:scale-[1.28] hover:bg-white/10 active:scale-95"
               >

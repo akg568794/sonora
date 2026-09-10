@@ -351,7 +351,10 @@ export function RoomScreen({ room, identity, tracks, onTracksChanged, audio, rea
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <div className="mx-auto grid w-full max-w-[1400px] flex-1 gap-6 px-4 py-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_390px] lg:gap-8 lg:py-10">
+      {/* Explicit `minmax(0,1fr)` column even on mobile — without it the implicit
+          grid track sizes to its content's max-width instead of the viewport,
+          letting the now-playing column render wider than the screen. */}
+      <div className="mx-auto grid w-full max-w-[1400px] flex-1 grid-cols-[minmax(0,1fr)] gap-6 px-4 py-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-8 lg:py-10">
         {/* ------------------------------------------------------ now playing */}
         <motion.section
           initial={{ opacity: 0, y: 18 }}

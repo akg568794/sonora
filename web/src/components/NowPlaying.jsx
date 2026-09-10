@@ -113,7 +113,11 @@ export function NowPlaying({
   const RepeatIcon = playback.repeat === 'one' ? Repeat1 : Repeat;
 
   return (
-    <div className="flex flex-col items-center">
+    // `w-full`: the parent flex section centers this via `justify-center`, which
+    // sizes it by shrink-to-fit — without a definite width, percentage-width
+    // descendants (canvas visualiser, sliders) resolve against an indefinite
+    // box and can push wider than the actual viewport on mobile.
+    <div className="flex w-full flex-col items-center">
       {/* ------------------------------------------------------------- artwork */}
       <div className="relative w-full max-w-[340px]">
         <ReactionLayer reactions={reactions} />
