@@ -9,6 +9,10 @@ const HARD_SEEK = 0.9;
 // much more starts to sound like a tape warble.
 const MAX_RATE_TRIM = 0.06;
 const CORRECTION_INTERVAL = 1000;
+// A transient network/CORS/decode hiccup shouldn't permanently kill playback —
+// retry with backoff before giving up on the file.
+const MAX_LOAD_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 600;
 
 /**
  * Keeps a local <audio> element locked to the room's authoritative playhead.
@@ -44,6 +48,8 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
   stateRef.current = { playback, track };
   const pendingSeekRef = useRef(null);
   const loadedTrackRef = useRef(null);
+  const retryRef = useRef({ key: null, attempts: 0 });
+  const retryTimerRef = useRef(null);
 
   const getAudio = () => audioRef.current;
 
@@ -79,7 +85,12 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
   useEffect(() => {
     const audio = getAudio();
     const onWaiting = () => setIsBuffering(true);
-    const onPlaying = () => setIsBuffering(false);
+    const onPlaying = () => {
+      setIsBuffering(false);
+      // Confirms the file is actually playable — clear any retry count from a
+      // now-resolved earlier hiccup on this same track.
+      retryRef.current = { key: loadedTrackRef.current, attempts: 0 };
+    };
     const onLoaded = () => {
       setIsBuffering(false);
       // Apply a seek that arrived before the file had metadata to seek within.
@@ -88,7 +99,26 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
         pendingSeekRef.current = null;
       }
     };
-    const onError = () => setIsBuffering(false);
+    // A network blip, transient CORS failure, or decode hiccup previously left
+    // the element permanently stuck — nothing ever reloaded it. Retry with
+    // backoff instead, and only give up once it's clearly not a fluke.
+    const onError = () => {
+      setIsBuffering(false);
+      const key = loadedTrackRef.current;
+      if (retryRef.current.key !== key) retryRef.current = { key, attempts: 0 };
+      if (retryRef.current.attempts >= MAX_LOAD_RETRIES) return;
+      retryRef.current.attempts += 1;
+      const delay = RETRY_BASE_DELAY_MS * 2 ** (retryRef.current.attempts - 1);
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = setTimeout(() => {
+        const { playback: pb, track: tr } = stateRef.current;
+        if (!tr?.url || loadedTrackRef.current !== key) return; // track already moved on
+        pendingSeekRef.current = Math.max(0, expectedPosition(pb));
+        audio.src = tr.url;
+        audio.load();
+        setIsBuffering(true);
+      }, delay);
+    };
     // The stored duration (from file metadata) is only an estimate — report the
     // real end back to the server so it can advance immediately instead of
     // waiting out a possibly-mistimed fallback timer.
@@ -106,6 +136,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     audio.addEventListener('ended', onEnded);
 
     return () => {
+      clearTimeout(retryTimerRef.current);
       audio.removeEventListener('waiting', onWaiting);
       audio.removeEventListener('stalled', onWaiting);
       audio.removeEventListener('playing', onPlaying);
@@ -152,6 +183,8 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     const trackKey = `${playback?.currentQid ?? ''}:${track.url}`;
     if (loadedTrackRef.current !== trackKey) {
       loadedTrackRef.current = trackKey;
+      clearTimeout(retryTimerRef.current);
+      retryRef.current = { key: trackKey, attempts: 0 };
       audio.src = track.url;
       const target = Math.max(0, expectedPosition(playback));
       pendingSeekRef.current = target;
