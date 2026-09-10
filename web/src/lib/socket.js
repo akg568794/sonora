@@ -24,6 +24,10 @@ class ServerClock {
     this.ready = false;
     this.listeners = new Set();
     this.timer = null;
+    // Lifetime counters, purely for the calibration UI — not used in the math.
+    this.sent = 0;
+    this.pure = 0;
+    this.impure = 0;
 
     sock.on('connect', () => this.#burst());
     if (sock.connected) this.#burst();
@@ -46,6 +50,8 @@ class ServerClock {
   probe() {
     if (!this.socket.connected) return;
     const sentAt = Date.now();
+    this.sent += 1;
+    this.listeners.forEach((fn) => fn(this));
     this.socket.emit('time:sync', sentAt, (reply) => {
       if (!reply?.serverTime) return;
       const receivedAt = Date.now();
@@ -53,6 +59,11 @@ class ServerClock {
       // Assume symmetric latency: the server's clock reading corresponds to
       // roughly the midpoint of our round trip.
       const offset = reply.serverTime - (sentAt + rtt / 2);
+      // A probe is "pure" if its round trip wasn't meaningfully slower than the
+      // best one seen so far — a rough proxy for "not queued behind other traffic".
+      const bestRtt = this.samples.length ? Math.min(...this.samples.map((s) => s.rtt)) : rtt;
+      if (rtt <= bestRtt * 1.6 + 15) this.pure += 1;
+      else this.impure += 1;
       this.samples.push({ offset, rtt });
       if (this.samples.length > this.window) this.samples.shift();
       this.#recompute();

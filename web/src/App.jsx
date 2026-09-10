@@ -6,6 +6,7 @@ import { AmbientBackdrop } from './components/AmbientBackdrop.jsx';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { MiniPlayer } from './components/MiniPlayer.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
+import { SyncCalibration } from './components/SyncCalibration.jsx';
 import { Modal } from './components/ui/Primitives.jsx';
 import { Lobby } from './screens/Lobby.jsx';
 import { Library } from './screens/Library.jsx';
@@ -109,6 +110,7 @@ export default function App() {
   const [tracks, setTracks] = useState([]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [joiningLabel, setJoiningLabel] = useState('');
   const [volume, setVolumeState] = useState(() => {
     const stored = Number(localStorage.getItem(VOLUME_KEY));
     return Number.isFinite(stored) && stored > 0 ? Math.min(1, stored) : 0.85;
@@ -215,6 +217,13 @@ export default function App() {
 
   /* -------------------------------------------------------------- room joining */
 
+  // On a fast local connection the join round-trip can finish in a few ms,
+  // which makes the calibration screen (and its staggered stat reveal) flash
+  // by unnoticed — hold it up for at least this long so it's actually visible.
+  // Matches SyncCalibration's DURATION_MS so the segment bar finishes filling
+  // right as the room opens.
+  const MIN_CALIBRATION_MS = 3000;
+
   const joinRoom = useCallback(
     async (code) => {
       const normalized = String(code ?? '').trim().toUpperCase();
@@ -222,7 +231,11 @@ export default function App() {
       // explicit join from the lobby also stops that effect re-joining later.
       attemptedCodeRef.current = normalized;
       setJoining(true);
+      setJoiningLabel(`Joining ${normalized}…`);
+      const startedAt = Date.now();
       const reply = await room.join(normalized);
+      const remaining = MIN_CALIBRATION_MS - (Date.now() - startedAt);
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       setJoining(false);
       if (reply?.ok) navigate(`/room/${reply.room.code}`);
       return reply;
@@ -233,7 +246,11 @@ export default function App() {
   const createRoom = useCallback(
     async (name) => {
       setJoining(true);
+      setJoiningLabel('Creating your room…');
+      const startedAt = Date.now();
       const reply = await room.create(name);
+      const remaining = MIN_CALIBRATION_MS - (Date.now() - startedAt);
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       setJoining(false);
       if (reply?.ok) {
         attemptedCodeRef.current = reply.room.code;
@@ -368,7 +385,7 @@ export default function App() {
               )}
 
               {onRoomScreen &&
-                (inRoom && room.code === route.code ? (
+                (inRoom && room.code === route.code && !joining ? (
                   <RoomScreen
                     room={{ ...room, leave: leaveRoom, close: closeRoom }}
                     identity={identity}
@@ -378,18 +395,18 @@ export default function App() {
                     read={read}
                   />
                 ) : (
-                  <div className="grid min-h-screen place-items-center">
-                    <div className="flex flex-col items-center gap-3 text-white/50">
-                      <Loader2 size={26} className="animate-spin" />
-                      <p className="text-[14px]">
-                        {room.status === 'error' ? room.error : `Joining ${route.code}…`}
-                      </p>
-                      {room.status === 'error' && (
+                  <div className="grid min-h-screen place-items-center px-4">
+                    {room.status === 'error' ? (
+                      <div className="flex flex-col items-center gap-3 text-white/50">
+                        <Loader2 size={26} className="animate-spin" />
+                        <p className="text-[14px]">{room.error}</p>
                         <button onClick={() => navigate('/')} className="btn btn-glass mt-2">
                           Back to rooms
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <SyncCalibration label={`Joining ${route.code}…`} />
+                    )}
                   </div>
                 ))}
             </motion.div>
@@ -400,6 +417,21 @@ export default function App() {
       <AnimatePresence>
         {showMiniPlayer && (
           <MiniPlayer room={room} audio={audio} onOpenRoom={() => navigate(`/room/${room.code}`)} />
+        )}
+      </AnimatePresence>
+
+      {/* The Lobby's join/create round-trip navigates only on success, so without
+          this the calibration screen never mounts — this overlay covers that gap. */}
+      <AnimatePresence>
+        {joining && !onRoomScreen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] grid place-items-center bg-black/60 px-4 backdrop-blur-sm"
+          >
+            <SyncCalibration label={joiningLabel} />
+          </motion.div>
         )}
       </AnimatePresence>
 
