@@ -219,13 +219,16 @@ export function NowPlaying({
       </div>
 
       {/* --------------------------------------------------------------- meta */}
-      <div className="mt-7 w-full max-w-[420px] text-center">
+      {/* `relative` gives the exiting title (below) a containing block to size
+          against, instead of blowing out to the viewport width. */}
+      <div className="relative mt-7 w-full max-w-[420px] text-center">
         <div className="mb-3 flex justify-center">
           <SyncBadge drift={drift} latency={latency} isPlaying={isPlaying} />
         </div>
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
             key={item?.qid ?? 'empty'}
+            className="w-full"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8, position: 'absolute' }}

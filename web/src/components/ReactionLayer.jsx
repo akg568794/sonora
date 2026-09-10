@@ -62,23 +62,35 @@ export function ReactionBar({ onReact, className = '' }) {
   const emojis = useMemo(() => REACTION_SET, []);
 
   return (
-    <div className={`flex items-center gap-1.5 ${className}`}>
-      <AnimatePresence initial={false}>
-        {expanded &&
-          emojis.map((emoji, i) => (
-            <motion.button
-              key={emoji}
-              initial={{ opacity: 0, scale: 0.3, x: 12 }}
-              animate={{ opacity: 1, scale: 1, x: 0 }}
-              exit={{ opacity: 0, scale: 0.3, x: 12 }}
-              transition={{ delay: i * 0.022, type: 'spring', stiffness: 500, damping: 26 }}
-              onClick={() => onReact(emoji)}
-              aria-label={`React ${emoji}`}
-              className="grid h-9 w-9 place-items-center rounded-full text-[19px] transition-transform duration-150 ease-spring hover:scale-[1.28] hover:bg-white/10 active:scale-95"
-            >
-              {emoji}
-            </motion.button>
-          ))}
+    // `relative` + an absolutely positioned popover keeps the expanded row from
+    // pushing this button's siblings sideways (it used to widen the flex row
+    // it lived in, shoving the rest of the transport bar off-screen).
+    <div className={`relative ${className}`}>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.94 }}
+            transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+            className="glass-strong absolute bottom-full right-0 z-20 mb-2 flex items-center gap-1 rounded-pill p-1.5"
+          >
+            {emojis.map((emoji, i) => (
+              <motion.button
+                key={emoji}
+                initial={{ opacity: 0, scale: 0.3 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.3 }}
+                transition={{ delay: i * 0.022, type: 'spring', stiffness: 500, damping: 26 }}
+                onClick={() => onReact(emoji)}
+                aria-label={`React ${emoji}`}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[19px] transition-transform duration-150 ease-spring hover:scale-[1.28] hover:bg-white/10 active:scale-95"
+              >
+                {emoji}
+              </motion.button>
+            ))}
+          </motion.div>
+        )}
       </AnimatePresence>
       <button
         onClick={() => setExpanded((v) => !v)}
