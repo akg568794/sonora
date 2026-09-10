@@ -14,6 +14,7 @@ import { RoomScreen } from './screens/RoomScreen.jsx';
 import { useAudioAnalyser } from './hooks/useAudioAnalyser.js';
 import { useRoom } from './hooks/useRoom.js';
 import { useSyncedAudio } from './hooks/useSyncedAudio.js';
+import { useTrackPrefetch } from './hooks/useTrackPrefetch.js';
 import { applyPalette, extractPalette } from './lib/color.js';
 import { fetchTracks } from './lib/api.js';
 import { loadIdentity, randomName, saveIdentity } from './lib/identity.js';
@@ -137,15 +138,33 @@ export default function App() {
 
   /* -------------------------------------------------------------------- audio */
 
+  // The next item in line, when it's actually predictable ahead of time —
+  // shuffle picks it at random on the server, so there's nothing to prefetch.
+  const nextQueueItem = useMemo(() => {
+    const { queue, playback } = room;
+    if (!queue.length || playback.shuffle || playback.repeat === 'one') return null;
+    let nextIndex = room.currentIndex + 1;
+    if (nextIndex >= queue.length) {
+      if (playback.repeat !== 'all') return null;
+      nextIndex = 0;
+    }
+    return queue[nextIndex] ?? null;
+  }, [room.queue, room.currentIndex, room.playback.shuffle, room.playback.repeat]);
+
+  const prefetchedBlobs = useTrackPrefetch(nextQueueItem);
+
   // Queue items already carry their media URL from the server; fall back to the
-  // local library copy in case an older item predates that.
+  // local library copy in case an older item predates that. A cached blob from
+  // prefetching takes priority — that's the whole point, no live request
+  // needed right at the transition.
   const currentTrack = useMemo(() => {
     if (!room.currentItem) return null;
     const libraryTrack = tracks.find((t) => t.id === room.currentItem.trackId);
-    const url = room.currentItem.url ?? libraryTrack?.url ?? null;
+    const url =
+      prefetchedBlobs.get(room.currentItem.qid) ?? room.currentItem.url ?? libraryTrack?.url ?? null;
     if (!url) return null;
     return { ...room.currentItem, url, cover: room.currentItem.cover ?? libraryTrack?.cover ?? null };
-  }, [room.currentItem, tracks]);
+  }, [room.currentItem, tracks, prefetchedBlobs]);
 
   const audioState = useSyncedAudio({
     playback: room.playback,
