@@ -1,0 +1,24 @@
+{
+  "name": "sonora",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Listen to music together, in perfect sync.",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/check-node.mjs && concurrently -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node scripts/check-node.mjs && node --watch server/index.js",
+    "dev:web": "node scripts/check-node.mjs && cd web && vite",
+    "build": "node scripts/check-node.mjs && cd web && vite build",
+    "start": "node scripts/check-node.mjs && node server/index.js",
+    "smoke": "node scripts/check-node.mjs && node scripts/smoke-test.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

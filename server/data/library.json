@@ -1,0 +1,64 @@
+{
+  "tracks": [
+    {
+      "id": "CbVo4l-DL7E7",
+      "title": "Doraemon Silent Ringtone",
+      "artist": "AudioTrim",
+      "album": "",
+      "year": null,
+      "genre": null,
+      "duration": 29.414,
+      "file": "44L9zwuqz0wj.mp3",
+      "url": "/media/audio/44L9zwuqz0wj.mp3",
+      "coverFile": null,
+      "cover": null,
+      "bitrate": 128,
+      "size": 471234,
+      "uploadedBy": {
+        "id": "u_nf6d0zn852p7",
+        "name": "Abhay"
+      },
+      "uploadedAt": 1786639349446
+    },
+    {
+      "id": "rzM-1Bwb6UtD",
+      "title": "smoke-tone-a",
+      "artist": "Unknown artist",
+      "album": "",
+      "year": null,
+      "genre": null,
+      "duration": 6,
+      "file": "dYXryxpENiJf.wav",
+      "url": "/media/audio/dYXryxpENiJf.wav",
+      "coverFile": null,
+      "cover": null,
+      "bitrate": 706,
+      "size": 529244,
+      "uploadedBy": {
+        "id": "smoke-test",
+        "name": "Smoke Test"
+      },
+      "uploadedAt": 1786688113066
+    },
+    {
+      "id": "hcyo0j0bJu26",
+      "title": "smoke-tone-b",
+      "artist": "Unknown artist",
+      "album": "",
+      "year": null,
+      "genre": null,
+      "duration": 5,
+      "file": "4p3_LyC9sUGW.wav",
+      "url": "/media/audio/4p3_LyC9sUGW.wav",
+      "coverFile": null,
+      "cover": null,
+      "bitrate": 706,
+      "size": 441044,
+      "uploadedBy": {
+        "id": "smoke-test",
+        "name": "Smoke Test"
+      },
+      "uploadedAt": 1786688113070
+    }
+  ]
+}
