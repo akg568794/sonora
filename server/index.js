@@ -278,6 +278,13 @@ io.on('connection', (socket) => {
   socket.on('playback:previous', control((room) => room.previous()));
   socket.on('playback:jump', control((room, p) => room.playItem(p.qid, { autoplay: true })));
 
+  // A client's local <audio> reaching its real end — a passive report, not a
+  // command, so it isn't gated by `canControl`.
+  socket.on('playback:ended', (payload = {}) => {
+    const { room } = context(socket);
+    if (room?.reportEnded(payload.qid)) broadcastPlayback(room);
+  });
+
   // ------------------------------------------------------------ chat/reactions
 
   socket.on('chat:send', (payload = {}, ack) => {

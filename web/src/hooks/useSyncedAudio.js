@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { expectedPosition, serverClock } from '../lib/socket.js';
+import { expectedPosition, serverClock, socket } from '../lib/socket.js';
 
 // Anything under this and we leave it alone — chasing it would be audible.
 const IN_SYNC = 0.045;
@@ -34,6 +34,10 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
   const [isBuffering, setIsBuffering] = useState(false);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [drift, setDrift] = useState(0);
+  // Position math is meaningless before the first clock probe resolves — wait
+  // for it rather than scheduling playback against an assumed zero offset.
+  const [clockReady, setClockReady] = useState(serverClock.ready);
+  useEffect(() => serverClock.onChange(() => setClockReady(serverClock.ready)), []);
 
   // Latest values, readable from callbacks without re-subscribing listeners.
   const stateRef = useRef({ playback, track });
@@ -85,6 +89,13 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
       }
     };
     const onError = () => setIsBuffering(false);
+    // The stored duration (from file metadata) is only an estimate — report the
+    // real end back to the server so it can advance immediately instead of
+    // waiting out a possibly-mistimed fallback timer.
+    const onEnded = () => {
+      const qid = stateRef.current.playback?.currentQid;
+      if (qid) socket.emit('playback:ended', { qid });
+    };
 
     audio.addEventListener('waiting', onWaiting);
     audio.addEventListener('stalled', onWaiting);
@@ -92,6 +103,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     audio.addEventListener('canplay', onPlaying);
     audio.addEventListener('loadedmetadata', onLoaded);
     audio.addEventListener('error', onError);
+    audio.addEventListener('ended', onEnded);
 
     return () => {
       audio.removeEventListener('waiting', onWaiting);
@@ -100,6 +112,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
       audio.removeEventListener('canplay', onPlaying);
       audio.removeEventListener('loadedmetadata', onLoaded);
       audio.removeEventListener('error', onError);
+      audio.removeEventListener('ended', onEnded);
     };
   }, []);
 
@@ -156,6 +169,10 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
   useEffect(() => {
     const audio = getAudio();
     if (!track?.url || !playback?.currentQid) return;
+    // Wait for the first clock probe — computing a target position with an
+    // assumed zero offset is how a fresh join/reload turns into a bad hard
+    // seek (perceived as the track jumping ahead).
+    if (!serverClock.ready) return;
 
     if (playback.isPlaying) {
       const leadMs = playback.startedAt - serverClock.now();
@@ -197,7 +214,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     // startedAt changes on every server-side seek, which is exactly when we want
     // to re-evaluate our position.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playback?.isPlaying, playback?.startedAt, playback?.positionAtStart, track?.url]);
+  }, [playback?.isPlaying, playback?.startedAt, playback?.positionAtStart, track?.url, clockReady]);
 
 
   // ---------------------------------------------------------- drift correction
