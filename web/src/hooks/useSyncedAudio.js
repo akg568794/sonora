@@ -9,30 +9,36 @@ const HARD_SEEK = 0.9;
 // much more starts to sound like a tape warble.
 const MAX_RATE_TRIM = 0.06;
 const CORRECTION_INTERVAL = 1000;
-// A transient network/CORS/decode hiccup shouldn't permanently kill playback —
+// A transient network/decode hiccup shouldn't permanently kill playback —
 // retry with backoff before giving up on the file.
 const MAX_LOAD_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 600;
+// Decoded PCM is heavy (tens of MB per track) — only ever keep what's actually
+// needed: the current track plus one prefetched track.
+const MAX_CACHED_BUFFERS = 2;
 
 /**
- * Keeps a local <audio> element locked to the room's authoritative playhead.
+ * Web Audio based playback: tracks are fetched and fully decoded into an
+ * AudioBuffer, then started with `AudioBufferSourceNode.start(when)`, where
+ * `when` is expressed on the audio hardware's own clock rather than a
+ * `setTimeout` + `<audio>.play()` pair. That removes JS-timer jitter from the
+ * scheduled start entirely — once scheduled, the browser's audio engine fires
+ * it exactly on time regardless of main-thread load.
  *
- * Two-tier correction: small drift is absorbed by very slightly changing
- * playbackRate so the music glides back into place with no audible seam, and
- * only large drift (a tab that was suspended, a long buffer stall) gets a hard
- * seek. Everything is derived from server time, never from a local timer, so
+ * Two-tier drift correction still applies on top of that: small drift is
+ * absorbed by nudging the source's playbackRate, and only large drift (a
+ * suspended tab, a long stall) tears down and restarts the source at a fresh
+ * offset. Everything is derived from server time, never a local timer, so
  * every listener converges on the same position independently.
  */
-export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
-  const audioRef = useRef(null);
-  // Created during the first render rather than in an effect, so consumers such
-  // as the visualiser's analyser find a real element on their first pass.
-  if (!audioRef.current && typeof window !== 'undefined') {
-    const el = new Audio();
-    el.preload = 'auto';
-    el.crossOrigin = 'anonymous';
-    audioRef.current = el;
-  }
+export function useSyncedAudio({ playback, track, nextTrack, volume = 1, muted = false }) {
+  const ctxRef = useRef(null);
+  const gainRef = useRef(null);
+  const analyserRef = useRef(null);
+  const sourceRef = useRef(null);
+  const sourceMetaRef = useRef({ qid: null, ctxStartTime: 0, offset: 0 });
+  const bufferCacheRef = useRef(new Map()); // qid -> AudioBuffer
+  const fetchingRef = useRef(new Map()); // qid -> Promise<AudioBuffer>
 
   const [position, setPosition] = useState(0);
   const [isBuffering, setIsBuffering] = useState(false);
@@ -42,240 +48,235 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
   // for it rather than scheduling playback against an assumed zero offset.
   const [clockReady, setClockReady] = useState(serverClock.ready);
   useEffect(() => serverClock.onChange(() => setClockReady(serverClock.ready)), []);
+  // Bumped after a successful `unlock()` so the scheduling effect re-runs with
+  // a context that's actually running (its clock is frozen while suspended).
+  const [resumeSignal, setResumeSignal] = useState(0);
 
   // Latest values, readable from callbacks without re-subscribing listeners.
   const stateRef = useRef({ playback, track });
   stateRef.current = { playback, track };
-  const pendingSeekRef = useRef(null);
-  const loadedTrackRef = useRef(null);
-  const retryRef = useRef({ key: null, attempts: 0 });
-  const retryTimerRef = useRef(null);
 
-  const getAudio = () => audioRef.current;
-
-  /** Attempt playback, surfacing the browser's autoplay block as a UI prompt. */
-  const attemptPlay = useCallback(async () => {
-    const audio = getAudio();
-    try {
-      await audio.play();
-      setNeedsGesture(false);
-      return true;
-    } catch (err) {
-      // NotAllowedError => no user gesture yet. Anything else is a real failure.
-      if (err?.name === 'NotAllowedError') setNeedsGesture(true);
-      return false;
-    }
-  }, []);
-
-  /** Called from a click/tap: satisfies autoplay policy and re-syncs. */
-  const unlock = useCallback(async () => {
-    const audio = getAudio();
-    const { playback: pb } = stateRef.current;
-    audio.muted = false;
-    if (pb?.isPlaying) {
-      audio.currentTime = Math.max(0, expectedPosition(pb));
-      await attemptPlay();
-    } else {
-      setNeedsGesture(false);
-    }
-  }, [attemptPlay]);
-
-  // ------------------------------------------------------------ element wiring
+  const getContext = () => {
+    if (ctxRef.current) return ctxRef.current;
+    if (typeof window === 'undefined') return null;
+    const Ctx = window.AudioContext ?? window.webkitAudioContext;
+    if (!Ctx) return null;
+    const ctx = new Ctx();
+    const gain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.82;
+    gain.connect(analyser);
+    analyser.connect(ctx.destination);
+    ctxRef.current = ctx;
+    gainRef.current = gain;
+    analyserRef.current = analyser;
+    return ctx;
+  };
+  // Created during the first render rather than in an effect, so consumers
+  // such as the visualiser's analyser find a real node on their first pass.
+  getContext();
 
   useEffect(() => {
-    const audio = getAudio();
-    const onWaiting = () => setIsBuffering(true);
-    const onPlaying = () => {
-      setIsBuffering(false);
-      // Confirms the file is actually playable — clear any retry count from a
-      // now-resolved earlier hiccup on this same track.
-      retryRef.current = { key: loadedTrackRef.current, attempts: 0 };
-    };
-    const onLoaded = () => {
-      setIsBuffering(false);
-      // Apply a seek that arrived before the file had metadata to seek within.
-      if (pendingSeekRef.current != null) {
-        audio.currentTime = pendingSeekRef.current;
-        pendingSeekRef.current = null;
-      }
-    };
-    // A network blip, transient CORS failure, or decode hiccup previously left
-    // the element permanently stuck — nothing ever reloaded it. Retry with
-    // backoff instead, and only give up once it's clearly not a fluke.
-    const onError = () => {
-      setIsBuffering(false);
-      const key = loadedTrackRef.current;
-      if (retryRef.current.key !== key) retryRef.current = { key, attempts: 0 };
-      if (retryRef.current.attempts >= MAX_LOAD_RETRIES) return;
-      retryRef.current.attempts += 1;
-      const delay = RETRY_BASE_DELAY_MS * 2 ** (retryRef.current.attempts - 1);
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = setTimeout(() => {
-        const { playback: pb, track: tr } = stateRef.current;
-        if (!tr?.url || loadedTrackRef.current !== key) return; // track already moved on
-        pendingSeekRef.current = Math.max(0, expectedPosition(pb));
-        audio.src = tr.url;
-        audio.load();
-        setIsBuffering(true);
-      }, delay);
-    };
-    // The stored duration (from file metadata) is only an estimate — report the
-    // real end back to the server so it can advance immediately instead of
-    // waiting out a possibly-mistimed fallback timer.
-    const onEnded = () => {
-      const qid = stateRef.current.playback?.currentQid;
-      if (qid) socket.emit('playback:ended', { qid });
-    };
-
-    audio.addEventListener('waiting', onWaiting);
-    audio.addEventListener('stalled', onWaiting);
-    audio.addEventListener('playing', onPlaying);
-    audio.addEventListener('canplay', onPlaying);
-    audio.addEventListener('loadedmetadata', onLoaded);
-    audio.addEventListener('error', onError);
-    audio.addEventListener('ended', onEnded);
-
-    return () => {
-      clearTimeout(retryTimerRef.current);
-      audio.removeEventListener('waiting', onWaiting);
-      audio.removeEventListener('stalled', onWaiting);
-      audio.removeEventListener('playing', onPlaying);
-      audio.removeEventListener('canplay', onPlaying);
-      audio.removeEventListener('loadedmetadata', onLoaded);
-      audio.removeEventListener('error', onError);
-      audio.removeEventListener('ended', onEnded);
-    };
-  }, []);
-
-  useEffect(() => {
-    const audio = getAudio();
-    audio.volume = Math.max(0, Math.min(1, volume));
-    audio.muted = muted;
+    const gain = gainRef.current;
+    if (gain) gain.gain.value = muted ? 0 : Math.max(0, Math.min(1, volume));
   }, [volume, muted]);
 
-  // Release the element only when the hook itself goes away.
-  useEffect(
-    () => () => {
-      const audio = audioRef.current;
-      if (audio) {
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
+  /** Called from a click/tap: browsers require a gesture to resume a suspended context. */
+  const unlock = useCallback(async () => {
+    const ctx = getContext();
+    if (ctx?.state === 'suspended') {
+      try {
+        await ctx.resume();
+        setResumeSignal((n) => n + 1);
+      } catch {
+        return;
       }
+    }
+    setNeedsGesture(false);
+  }, []);
+
+  // ------------------------------------------------------------- buffer cache
+
+  const loadBuffer = useCallback((qid, url) => {
+    if (!qid || !url) return Promise.resolve(null);
+    const cached = bufferCacheRef.current.get(qid);
+    if (cached) return Promise.resolve(cached);
+    const inFlight = fetchingRef.current.get(qid);
+    if (inFlight) return inFlight;
+
+    const ctx = getContext();
+    const attempt = (n) =>
+      fetch(url)
+        .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(String(res.status)))))
+        .then((buf) => ctx.decodeAudioData(buf))
+        .catch((err) => {
+          if (n >= MAX_LOAD_RETRIES) throw err;
+          return new Promise((resolve) => setTimeout(resolve, RETRY_BASE_DELAY_MS * 2 ** n)).then(() =>
+            attempt(n + 1)
+          );
+        });
+
+    const promise = attempt(0)
+      .then((decoded) => {
+        const cache = bufferCacheRef.current;
+        cache.set(qid, decoded);
+        while (cache.size > MAX_CACHED_BUFFERS) cache.delete(cache.keys().next().value);
+        return decoded;
+      })
+      .finally(() => fetchingRef.current.delete(qid));
+
+    fetchingRef.current.set(qid, promise);
+    return promise;
+  }, []);
+
+  // Decode the current track, and report back once it's ready — the server
+  // waits on this (the load handshake) before committing to a start time.
+  useEffect(() => {
+    const qid = playback?.currentQid;
+    if (!qid || !track?.url) return;
+    let cancelled = false;
+    setIsBuffering(true);
+    loadBuffer(qid, track.url)
+      .then(() => {
+        if (cancelled) return;
+        setIsBuffering(false);
+        socket.emit('playback:loaded', { qid });
+      })
+      .catch(() => {
+        if (!cancelled) setIsBuffering(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [playback?.currentQid, track?.url, loadBuffer]);
+
+  // Prefetch the next queued track while the current one plays, so the
+  // transition to it never depends on a fresh request landing on cue.
+  useEffect(() => {
+    if (!nextTrack?.qid || !nextTrack?.url) return;
+    loadBuffer(nextTrack.qid, nextTrack.url).catch(() => {});
+  }, [nextTrack?.qid, nextTrack?.url, loadBuffer]);
+
+  // --------------------------------------------------------- playback engine
+
+  const stopSource = useCallback(() => {
+    const src = sourceRef.current;
+    if (!src) return;
+    src.onended = null;
+    try {
+      src.stop();
+    } catch {
+      /* already stopped */
+    }
+    sourceRef.current = null;
+  }, []);
+
+  /** BufferSourceNodes are one-shot — a fresh one is created every time we (re)start. */
+  const startSource = useCallback(
+    (buffer, qid, { when, offset }) => {
+      const ctx = getContext();
+      stopSource();
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gainRef.current);
+      source.onended = () => {
+        // A stop from a hard-correction or track change also fires this, but
+        // those null the handler out first (see stopSource) — so reaching
+        // here means the buffer genuinely played to its end.
+        if (sourceRef.current !== source) return;
+        sourceRef.current = null;
+        const currentQid = stateRef.current.playback?.currentQid;
+        if (currentQid) socket.emit('playback:ended', { qid: currentQid });
+      };
+      source.start(when, offset);
+      sourceRef.current = source;
+      sourceMetaRef.current = { qid, ctxStartTime: when, offset };
+      return source;
     },
-    []
+    [stopSource]
   );
 
-  // ------------------------------------------------------------- track loading
-
+  // Schedule (or reschedule) playback whenever the server's timeline changes.
   useEffect(() => {
-    const audio = getAudio();
-
-    if (!track?.url) {
-      audio.pause();
-      loadedTrackRef.current = null;
+    const qid = playback?.currentQid;
+    if (!qid || !track?.url) {
+      stopSource();
       setPosition(0);
       return;
     }
-
-    // Reload only when the source actually changes; re-seeking the same file on
-    // every state broadcast would stutter constantly.
-    const trackKey = `${playback?.currentQid ?? ''}:${track.url}`;
-    if (loadedTrackRef.current !== trackKey) {
-      loadedTrackRef.current = trackKey;
-      clearTimeout(retryTimerRef.current);
-      retryRef.current = { key: trackKey, attempts: 0 };
-      audio.src = track.url;
-      const target = Math.max(0, expectedPosition(playback));
-      pendingSeekRef.current = target;
-      audio.load();
-      setIsBuffering(true);
-    }
-
-    if (playback?.isPlaying) attemptPlay();
-    else audio.pause();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.url, playback?.currentQid]);
-
-  // --------------------------------------------------- play/pause + seek intent
-
-  useEffect(() => {
-    const audio = getAudio();
-    if (!track?.url || !playback?.currentQid) return;
-    // Wait for the first clock probe — computing a target position with an
-    // assumed zero offset is how a fresh join/reload turns into a bad hard
-    // seek (perceived as the track jumping ahead).
+    // Position math needs a real clock offset, and the AudioContext clock is
+    // frozen while suspended — both make "now" unreliable to schedule against.
     if (!serverClock.ready) return;
-
-    if (playback.isPlaying) {
-      const leadMs = playback.startedAt - serverClock.now();
-      // The server schedules this start a little in the future. Hold here and
-      // fire `play()` right on the scheduled moment instead of starting now and
-      // scrambling to catch up — that scramble is what reads as the track
-      // audibly speeding up right after every seek, resume, or skip.
-      if (serverClock.ready && leadMs > 20) {
-        audio.pause();
-        const hold = Math.max(0, playback.positionAtStart);
-        if (audio.readyState > 0) audio.currentTime = hold;
-        else pendingSeekRef.current = hold;
-        audio.playbackRate = 1;
-        setPosition(hold);
-        const timer = setTimeout(() => {
-          audio.currentTime = Math.max(0, expectedPosition(stateRef.current.playback));
-          attemptPlay();
-        }, leadMs);
-        return () => clearTimeout(timer);
-      }
-
-      const target = Math.max(0, expectedPosition(playback));
-      // A remote seek (or a resume after a long pause) shows up as a big gap.
-      if (Math.abs(audio.currentTime - target) > HARD_SEEK) {
-        if (audio.readyState > 0) audio.currentTime = target;
-        else pendingSeekRef.current = target;
-      }
-      if (audio.paused) attemptPlay();
-    } else {
-      if (!audio.paused) audio.pause();
-      const target = Math.max(0, playback.positionAtStart);
-      if (Math.abs(audio.currentTime - target) > 0.25) {
-        if (audio.readyState > 0) audio.currentTime = target;
-        else pendingSeekRef.current = target;
-      }
-      audio.playbackRate = 1;
-      setPosition(target);
+    const ctx = getContext();
+    if (ctx.state === 'suspended') {
+      setNeedsGesture(true);
+      return;
     }
-    // startedAt changes on every server-side seek, which is exactly when we want
-    // to re-evaluate our position.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playback?.isPlaying, playback?.startedAt, playback?.positionAtStart, track?.url, clockReady]);
 
+    const buffer = bufferCacheRef.current.get(qid);
+    if (!buffer) return; // still decoding — the load effect above re-triggers this once cached
+
+    if (!playback.isPlaying) {
+      stopSource();
+      setPosition(playback.positionAtStart);
+      return;
+    }
+
+    // Already the live, scheduled instance for this qid — the correction loop
+    // owns fine-tuning from here.
+    if (sourceMetaRef.current.qid === qid && sourceRef.current) return;
+
+    const leadMs = playback.startedAt - serverClock.now();
+    const when = ctx.currentTime + Math.max(0, leadMs) / 1000;
+    // Joining after the moment already passed: start already caught up to
+    // where the room actually is, instead of at the beginning.
+    const offset = Math.max(0, playback.positionAtStart + Math.max(0, -leadMs) / 1000);
+    startSource(buffer, qid, { when, offset });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    playback?.isPlaying,
+    playback?.startedAt,
+    playback?.positionAtStart,
+    playback?.currentQid,
+    track?.url,
+    clockReady,
+    isBuffering,
+    resumeSignal,
+  ]);
 
   // ---------------------------------------------------------- drift correction
 
   useEffect(() => {
     if (!playback?.isPlaying || !track?.url) return;
-    const audio = getAudio();
-    // A raw delta sample is noisy on a laggy connection (offset jitter, a GC
-    // pause) — chasing every reading directly makes playbackRate flap between
-    // values, which is audible as the track speeding up and slowing down.
-    // Smoothing it damps that without slowing down genuine drift correction.
+    const qid = playback.currentQid;
+    // A raw delta sample is noisy on a laggy connection — chasing every
+    // reading directly makes playbackRate flap, which is audible as the track
+    // speeding up and slowing down. Smoothing damps that.
     let smoothedDelta = 0;
 
     const correct = () => {
-      if (audio.paused || audio.readyState < 2 || !serverClock.ready) return;
+      const src = sourceRef.current;
+      const ctx = ctxRef.current;
+      const meta = sourceMetaRef.current;
+      if (!src || !ctx || !serverClock.ready || meta.qid !== qid) return;
+      const elapsed = ctx.currentTime - meta.ctxStartTime;
+      if (elapsed < 0) return; // scheduled start hasn't actually happened yet
+
+      const actualPosition = meta.offset + elapsed * src.playbackRate.value;
       const target = expectedPosition(stateRef.current.playback);
-      const rawDelta = target - audio.currentTime;
+      const rawDelta = target - actualPosition;
       smoothedDelta += 0.5 * (rawDelta - smoothedDelta);
       setDrift(smoothedDelta);
 
       if (Math.abs(rawDelta) > HARD_SEEK) {
-        audio.currentTime = Math.max(0, target);
-        audio.playbackRate = 1;
+        const buffer = bufferCacheRef.current.get(qid);
+        if (buffer) startSource(buffer, qid, { when: ctx.currentTime, offset: Math.max(0, target) });
         smoothedDelta = 0;
         return;
       }
       if (Math.abs(smoothedDelta) < IN_SYNC) {
-        if (audio.playbackRate !== 1) audio.playbackRate = 1;
+        if (src.playbackRate.value !== 1) src.playbackRate.value = 1;
         return;
       }
       // Aim to erase the gap over roughly the next two seconds.
@@ -283,7 +284,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
       const nextRate = 1 + trim;
       // Skip rewrites too small to be audible so sub-tick jitter can't keep
       // nudging playbackRate back and forth.
-      if (Math.abs(nextRate - audio.playbackRate) > 0.004) audio.playbackRate = nextRate;
+      if (Math.abs(nextRate - src.playbackRate.value) > 0.004) src.playbackRate.value = nextRate;
     };
 
     const timer = setInterval(correct, CORRECTION_INTERVAL);
@@ -301,10 +302,9 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     return () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
-      audio.playbackRate = 1;
+      if (sourceRef.current) sourceRef.current.playbackRate.value = 1;
     };
-  }, [playback?.isPlaying, playback?.startedAt, track?.url]);
-
+  }, [playback?.isPlaying, playback?.startedAt, playback?.currentQid, track?.url, startSource]);
 
   // ----------------------------------------------------------- UI position tick
 
@@ -316,10 +316,12 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
       // ~15fps is plenty for a progress bar and much kinder than every frame.
       if (now - last > 66) {
         last = now;
-        const audio = audioRef.current;
+        const ctx = ctxRef.current;
+        const src = sourceRef.current;
+        const meta = sourceMetaRef.current;
         const pos =
-          audio && !audio.paused && audio.readyState > 0
-            ? audio.currentTime
+          src && ctx && meta.qid === playback.currentQid
+            ? Math.max(0, meta.offset + (ctx.currentTime - meta.ctxStartTime) * src.playbackRate.value)
             : expectedPosition(stateRef.current.playback);
         setPosition(pos);
       }
@@ -344,5 +346,14 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     navigator.mediaSession.playbackState = playback?.isPlaying ? 'playing' : 'paused';
   }, [track, playback?.isPlaying]);
 
-  return { audioRef, position, isBuffering, needsGesture, drift, unlock };
+  // Release everything only when the hook itself goes away.
+  useEffect(
+    () => () => {
+      stopSource();
+      ctxRef.current?.close().catch(() => {});
+    },
+    [stopSource]
+  );
+
+  return { analyserRef, position, isBuffering, needsGesture, drift, unlock };
 }

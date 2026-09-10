@@ -14,7 +14,6 @@ import { RoomScreen } from './screens/RoomScreen.jsx';
 import { useAudioAnalyser } from './hooks/useAudioAnalyser.js';
 import { useRoom } from './hooks/useRoom.js';
 import { useSyncedAudio } from './hooks/useSyncedAudio.js';
-import { useTrackPrefetch } from './hooks/useTrackPrefetch.js';
 import { applyPalette, extractPalette } from './lib/color.js';
 import { fetchTracks } from './lib/api.js';
 import { loadIdentity, randomName, saveIdentity } from './lib/identity.js';
@@ -151,33 +150,25 @@ export default function App() {
     return queue[nextIndex] ?? null;
   }, [room.queue, room.currentIndex, room.playback.shuffle, room.playback.repeat]);
 
-  const prefetchedBlobs = useTrackPrefetch(nextQueueItem);
-
   // Queue items already carry their media URL from the server; fall back to the
-  // local library copy in case an older item predates that. A cached blob from
-  // prefetching takes priority — that's the whole point, no live request
-  // needed right at the transition.
+  // local library copy in case an older item predates that.
   const currentTrack = useMemo(() => {
     if (!room.currentItem) return null;
     const libraryTrack = tracks.find((t) => t.id === room.currentItem.trackId);
-    const url =
-      prefetchedBlobs.get(room.currentItem.qid) ?? room.currentItem.url ?? libraryTrack?.url ?? null;
+    const url = room.currentItem.url ?? libraryTrack?.url ?? null;
     if (!url) return null;
     return { ...room.currentItem, url, cover: room.currentItem.cover ?? libraryTrack?.cover ?? null };
-  }, [room.currentItem, tracks, prefetchedBlobs]);
+  }, [room.currentItem, tracks]);
 
   const audioState = useSyncedAudio({
     playback: room.playback,
     track: currentTrack,
+    nextTrack: nextQueueItem,
     volume,
     muted,
   });
 
-  // Routing the element through WebAudio silences it while the AudioContext is
-  // suspended, so wait until the browser has actually let us start playing.
-  const { read } = useAudioAnalyser(audioState.audioRef, {
-    active: room.status === 'joined' && !audioState.needsGesture,
-  });
+  const { read } = useAudioAnalyser(audioState.analyserRef);
 
   const setVolume = useCallback((next) => {
     const clamped = Math.max(0, Math.min(1, next));

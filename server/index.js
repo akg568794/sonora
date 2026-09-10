@@ -113,6 +113,7 @@ function leaveRoom(socket, { announce = true } = {}) {
   const { room } = context(socket);
   if (!room) return;
   const departed = room.removeSocket(socket.id);
+  room.recheckPendingSchedule(); // a straggler leaving can unblock a pending track change
   socket.leave(room.code);
   socket.data.roomCode = null;
   if (departed && announce) {
@@ -283,6 +284,14 @@ io.on('connection', (socket) => {
   socket.on('playback:ended', (payload = {}) => {
     const { room } = context(socket);
     if (room?.reportEnded(payload.qid)) broadcastPlayback(room);
+  });
+
+  // A client confirming it finished decoding the pending track into a buffer —
+  // also a passive report; the server finalizes the schedule once everyone
+  // (still connected) has acked, or after its own timeout.
+  socket.on('playback:loaded', (payload = {}) => {
+    const { room, user } = context(socket);
+    room?.acknowledgeLoaded(user.id, payload.qid);
   });
 
   // ------------------------------------------------------------ chat/reactions

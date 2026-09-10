@@ -17,6 +17,13 @@ const PLAY_LEAD_MS = 500;
 // is stronger evidence than our stored (file-metadata-derived) duration
 // estimate, which is sometimes a few seconds off from the real playable length.
 const MIN_PLAYED_BEFORE_END_MS = 3000;
+// A new track needs everyone to actually have it decoded before the server
+// commits to a start time — this caps how long it'll wait on stragglers before
+// starting anyway, so one slow connection can't hang the whole room.
+const LOAD_TIMEOUT_MS = 3000;
+// Headroom after the load handshake completes (all acked, or the timeout hit)
+// before the actual start, giving the finalized schedule time to reach everyone.
+const SCHEDULE_LEAD_MS = 400;
 
 export const now = () => Date.now();
 
@@ -49,6 +56,7 @@ class Room {
     this.shuffle = false;
     this.allowGuestControl = true;
     this.advanceTimer = null;
+    this.pendingSchedule = null; // load handshake in progress for a track change
   }
 
   // ---------------------------------------------------------------- listeners
@@ -186,12 +194,67 @@ class Room {
   playItem(qid, { autoplay = true, position = 0 } = {}) {
     const item = this.queue.find((i) => i.qid === qid);
     if (!item) return false;
+    this.#beginSchedule(qid, { autoplay, position });
+    return true;
+  }
+
+  /**
+   * A track change needs everyone to actually have the audio decoded before
+   * the server commits to a start time — otherwise whoever's still fetching
+   * would either stall mid-schedule or force a hard-correction the moment
+   * they catch up. Only `autoplay` cases wait on that handshake; queueing a
+   * track without playing it just seeks in place immediately.
+   */
+  #beginSchedule(qid, { autoplay, position }) {
+    this.#clearPendingSchedule();
     this.currentQid = qid;
     this.positionAtStart = position;
-    this.startedAt = now() + (autoplay ? PLAY_LEAD_MS : 0);
-    this.isPlaying = autoplay;
+    if (!autoplay) {
+      this.isPlaying = false;
+      this.startedAt = now();
+      this.#clearAdvance();
+      return;
+    }
+    this.isPlaying = false; // not yet — waiting on the load handshake
+    this.pendingSchedule = {
+      qid,
+      ackedUserIds: new Set(),
+      timer: setTimeout(() => this.#finalizeSchedule(), LOAD_TIMEOUT_MS),
+    };
+  }
+
+  /** Commits to an actual start time, once everyone's ready (or we've waited long enough). */
+  #finalizeSchedule() {
+    const pending = this.pendingSchedule;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingSchedule = null;
+    this.startedAt = now() + SCHEDULE_LEAD_MS;
+    this.isPlaying = true;
     this.#scheduleAdvance();
+    this.onChange?.(this);
+  }
+
+  #clearPendingSchedule() {
+    if (this.pendingSchedule) {
+      clearTimeout(this.pendingSchedule.timer);
+      this.pendingSchedule = null;
+    }
+  }
+
+  /** A client confirming it finished decoding the currently-pending track. */
+  acknowledgeLoaded(userId, qid) {
+    const pending = this.pendingSchedule;
+    if (!pending || pending.qid !== qid) return false;
+    pending.ackedUserIds.add(userId);
+    if (pending.ackedUserIds.size >= this.listeners.size) this.#finalizeSchedule();
     return true;
+  }
+
+  /** Someone leaving can complete a handshake that was only waiting on them. */
+  recheckPendingSchedule() {
+    const pending = this.pendingSchedule;
+    if (pending && pending.ackedUserIds.size >= this.listeners.size) this.#finalizeSchedule();
   }
 
   position() {
@@ -279,6 +342,7 @@ class Room {
   }
 
   stop() {
+    this.#clearPendingSchedule();
     this.currentQid = null;
     this.isPlaying = false;
     this.positionAtStart = 0;
@@ -313,6 +377,7 @@ class Room {
   }
 
   dispose() {
+    this.#clearPendingSchedule();
     this.#clearAdvance();
   }
 
@@ -342,6 +407,7 @@ class Room {
       serverTime: now(),
       repeat: this.repeat,
       shuffle: this.shuffle,
+      pendingQid: this.pendingSchedule?.qid ?? null,
     };
   }
 
