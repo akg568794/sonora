@@ -158,6 +158,25 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     if (!track?.url || !playback?.currentQid) return;
 
     if (playback.isPlaying) {
+      const leadMs = playback.startedAt - serverClock.now();
+      // The server schedules this start a little in the future. Hold here and
+      // fire `play()` right on the scheduled moment instead of starting now and
+      // scrambling to catch up — that scramble is what reads as the track
+      // audibly speeding up right after every seek, resume, or skip.
+      if (serverClock.ready && leadMs > 20) {
+        audio.pause();
+        const hold = Math.max(0, playback.positionAtStart);
+        if (audio.readyState > 0) audio.currentTime = hold;
+        else pendingSeekRef.current = hold;
+        audio.playbackRate = 1;
+        setPosition(hold);
+        const timer = setTimeout(() => {
+          audio.currentTime = Math.max(0, expectedPosition(stateRef.current.playback));
+          attemptPlay();
+        }, leadMs);
+        return () => clearTimeout(timer);
+      }
+
       const target = Math.max(0, expectedPosition(playback));
       // A remote seek (or a resume after a long pause) shows up as a big gap.
       if (Math.abs(audio.currentTime - target) > HARD_SEEK) {
@@ -179,6 +198,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
     // to re-evaluate our position.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playback?.isPlaying, playback?.startedAt, playback?.positionAtStart, track?.url]);
+
 
   // ---------------------------------------------------------- drift correction
 

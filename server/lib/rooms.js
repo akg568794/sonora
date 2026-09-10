@@ -5,6 +5,13 @@ const roomCode = customAlphabet('ABCDEFGHJKMNPQRSTUVWXYZ23456789', 6);
 
 const CHAT_HISTORY = 200;
 const ADVANCE_GRACE_MS = 250;
+// Every play/seek/skip is scheduled this far in the future rather than applied
+// immediately. Clients that receive the broadcast in time hold their position
+// and start exactly on the dot instead of racing to catch up after the fact —
+// which is what was making playback audibly speed up and slow down. A slower
+// listener whose broadcast arrives after the moment has passed just falls back
+// to the old catch-up correction, so this only ever helps.
+const PLAY_LEAD_MS = 500;
 
 export const now = () => Date.now();
 
@@ -176,7 +183,7 @@ class Room {
     if (!item) return false;
     this.currentQid = qid;
     this.positionAtStart = position;
-    this.startedAt = now();
+    this.startedAt = now() + (autoplay ? PLAY_LEAD_MS : 0);
     this.isPlaying = autoplay;
     this.#scheduleAdvance();
     return true;
@@ -185,7 +192,9 @@ class Room {
   position() {
     if (!this.currentQid) return 0;
     if (!this.isPlaying) return this.positionAtStart;
-    return this.positionAtStart + (now() - this.startedAt) / 1000;
+    // Clamp: while startedAt is still in the future (the scheduled-start lead),
+    // report the not-yet-moved position rather than going negative.
+    return this.positionAtStart + Math.max(0, now() - this.startedAt) / 1000;
   }
 
   play() {
@@ -193,7 +202,7 @@ class Room {
     // Restart from the top if the last track had run to the end.
     const duration = this.current?.duration ?? 0;
     if (duration && this.positionAtStart >= duration - 0.25) this.positionAtStart = 0;
-    this.startedAt = now();
+    this.startedAt = now() + PLAY_LEAD_MS;
     this.isPlaying = true;
     this.#scheduleAdvance();
     return true;
@@ -211,7 +220,7 @@ class Room {
     if (!this.currentQid) return false;
     const duration = this.current?.duration ?? Infinity;
     this.positionAtStart = Math.max(0, Math.min(duration, position));
-    this.startedAt = now();
+    this.startedAt = now() + (this.isPlaying ? PLAY_LEAD_MS : 0);
     this.#scheduleAdvance();
     return true;
   }
@@ -267,7 +276,9 @@ class Room {
     if (!this.isPlaying) return;
     const duration = this.current?.duration;
     if (!duration || !Number.isFinite(duration)) return;
-    const remainingMs = (duration - this.position()) * 1000 + ADVANCE_GRACE_MS;
+    // Computed from startedAt directly (not position()) so the still-pending
+    // scheduled-start lead is correctly included in the remaining time.
+    const remainingMs = this.startedAt - now() + (duration - this.positionAtStart) * 1000 + ADVANCE_GRACE_MS;
     this.advanceTimer = setTimeout(() => {
       this.advanceTimer = null;
       this.next({ auto: true });

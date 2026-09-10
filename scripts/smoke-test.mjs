@@ -109,11 +109,14 @@ check('first track autoplays', bobPlay?.payload.isPlaying === true);
 check('playback has server timestamps', Number.isFinite(bobPlay?.payload.startedAt) && Number.isFinite(bobPlay?.payload.serverTime));
 
 console.log('\n4. Both clients derive the same position');
-await wait(1000);
+// The server schedules the start ~500ms in the future (see PLAY_LEAD_MS in
+// rooms.js), so wait past that lead before expecting the position to have
+// advanced.
+await wait(1500);
 const aProbe = await alice.ask('time:sync', Date.now());
 const bProbe = await bob.ask('time:sync', Date.now());
 const pb = bobPlay.payload;
-const derive = (serverNow) => pb.positionAtStart + (serverNow - pb.startedAt) / 1000;
+const derive = (serverNow) => pb.positionAtStart + Math.max(0, serverNow - pb.startedAt) / 1000;
 const aPos = derive(aProbe.serverTime);
 const bPos = derive(bProbe.serverTime);
 check('derived positions agree within 50ms', Math.abs(aPos - bPos) < 0.05, `${aPos.toFixed(3)}s vs ${bPos.toFixed(3)}s`);
@@ -168,7 +171,8 @@ const shortTrack = snapshot[0];
 await alice.ask('playback:jump', { qid: shortTrack.qid });
 await alice.ask('playback:seek', { position: Math.max(0, shortTrack.duration - 1.2) });
 alice.events.length = 0;
-await wait(2000);
+// +500ms for the scheduled-start lead the seek above also carries.
+await wait(2600);
 const advanced = alice.events.filter((e) => e.e === 'room:playback').pop();
 check('server advanced past the finished track', advanced?.payload.currentQid !== shortTrack.qid, `now ${advanced?.payload.currentQid}`);
 check('next track is playing', advanced?.payload.isPlaying === true);

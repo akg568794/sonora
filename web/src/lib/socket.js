@@ -96,11 +96,16 @@ export const serverClock = new ServerClock(socket);
 /**
  * Where the room's playhead should be right now, derived from the authoritative
  * (startedAt, positionAtStart) pair rather than any client's own timer.
+ *
+ * The server schedules play/seek/skip a little in the future (see
+ * `PLAY_LEAD_MS` in `rooms.js`) so every listener can start on the dot instead
+ * of catching up after the fact — so this clamps to `positionAtStart` while
+ * that scheduled start is still pending.
  */
 export function expectedPosition(playback, clock = serverClock) {
   if (!playback?.currentQid) return 0;
   if (!playback.isPlaying) return playback.positionAtStart;
-  return playback.positionAtStart + (clock.now() - playback.startedAt) / 1000;
+  return playback.positionAtStart + Math.max(0, clock.now() - playback.startedAt) / 1000;
 }
 
 /** Promise-wrapped emit for the request/ack style events the server exposes. */
