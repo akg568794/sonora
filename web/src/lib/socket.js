@@ -33,10 +33,12 @@ class ServerClock {
   /** Several probes back-to-back on connect so playback starts accurate. */
   #burst() {
     this.samples = [];
+    this.burstActive = true;
     let sent = 0;
     const fire = () => {
       this.probe();
       if (++sent < 5) setTimeout(fire, 180);
+      else this.burstActive = false;
     };
     fire();
   }
@@ -65,7 +67,14 @@ class ServerClock {
   #recompute() {
     const best = [...this.samples].sort((a, b) => a.rtt - b.rtt).slice(0, 3);
     if (!best.length) return;
-    this.offset = best.reduce((sum, s) => sum + s.offset, 0) / best.length;
+    const measured = best.reduce((sum, s) => sum + s.offset, 0) / best.length;
+    // The initial burst should snap straight to the measurement so playback
+    // starts accurate immediately. After that, on a high-latency connection a
+    // single noisy probe (queued packet, a busy tab) can otherwise yank the
+    // offset around every 10s, which shows up as the whole track audibly
+    // speeding up or slowing down as the drift-correction loop chases it. Ease
+    // towards new measurements instead of snapping to them.
+    this.offset = !this.ready || this.burstActive ? measured : this.offset + 0.25 * (measured - this.offset);
     this.rtt = best[0].rtt;
     this.ready = true;
     this.listeners.forEach((fn) => fn(this));

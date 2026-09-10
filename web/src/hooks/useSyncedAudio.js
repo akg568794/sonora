@@ -185,25 +185,35 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
   useEffect(() => {
     if (!playback?.isPlaying || !track?.url) return;
     const audio = getAudio();
+    // A raw delta sample is noisy on a laggy connection (offset jitter, a GC
+    // pause) — chasing every reading directly makes playbackRate flap between
+    // values, which is audible as the track speeding up and slowing down.
+    // Smoothing it damps that without slowing down genuine drift correction.
+    let smoothedDelta = 0;
 
     const correct = () => {
       if (audio.paused || audio.readyState < 2 || !serverClock.ready) return;
       const target = expectedPosition(stateRef.current.playback);
-      const delta = target - audio.currentTime;
-      setDrift(delta);
+      const rawDelta = target - audio.currentTime;
+      smoothedDelta += 0.5 * (rawDelta - smoothedDelta);
+      setDrift(smoothedDelta);
 
-      if (Math.abs(delta) > HARD_SEEK) {
+      if (Math.abs(rawDelta) > HARD_SEEK) {
         audio.currentTime = Math.max(0, target);
         audio.playbackRate = 1;
+        smoothedDelta = 0;
         return;
       }
-      if (Math.abs(delta) < IN_SYNC) {
+      if (Math.abs(smoothedDelta) < IN_SYNC) {
         if (audio.playbackRate !== 1) audio.playbackRate = 1;
         return;
       }
       // Aim to erase the gap over roughly the next two seconds.
-      const trim = Math.max(-MAX_RATE_TRIM, Math.min(MAX_RATE_TRIM, delta / 2));
-      audio.playbackRate = 1 + trim;
+      const trim = Math.max(-MAX_RATE_TRIM, Math.min(MAX_RATE_TRIM, smoothedDelta / 2));
+      const nextRate = 1 + trim;
+      // Skip rewrites too small to be audible so sub-tick jitter can't keep
+      // nudging playbackRate back and forth.
+      if (Math.abs(nextRate - audio.playbackRate) > 0.004) audio.playbackRate = nextRate;
     };
 
     const timer = setInterval(correct, CORRECTION_INTERVAL);
@@ -211,7 +221,10 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
 
     // A backgrounded tab is throttled and will be badly behind on return.
     const onVisible = () => {
-      if (document.visibilityState === 'visible') correct();
+      if (document.visibilityState === 'visible') {
+        smoothedDelta = 0;
+        correct();
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
 
@@ -221,6 +234,7 @@ export function useSyncedAudio({ playback, track, volume = 1, muted = false }) {
       audio.playbackRate = 1;
     };
   }, [playback?.isPlaying, playback?.startedAt, track?.url]);
+
 
   // ----------------------------------------------------------- UI position tick
 
