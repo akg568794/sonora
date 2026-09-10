@@ -11,15 +11,15 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
     <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-ink-900">
       {/* Wider chrome only kicks in at laptop-and-up widths — tablet and phone keep their own images below. */}
       <div
-        className="absolute inset-0 hidden bg-cover bg-center opacity-40 lg:block"
+        className="absolute inset-0 hidden bg-cover bg-center opacity-55 lg:block"
         style={{ backgroundImage: 'url(/media/covers/laptop.png)' }}
       />
       <div
-        className="absolute inset-0 hidden bg-cover bg-center opacity-40 md:block lg:hidden"
+        className="absolute inset-0 hidden bg-cover bg-center opacity-55 md:block lg:hidden"
         style={{ backgroundImage: 'url(/media/covers/tablet.png)' }}
       />
       <div
-        className="absolute inset-0 bg-cover bg-center opacity-40 md:hidden"
+        className="absolute inset-0 bg-cover bg-center opacity-55 md:hidden"
         style={{ backgroundImage: 'url(/media/covers/mobile.png)' }}
       />
 
@@ -28,7 +28,9 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
           <motion.div
             key={cover}
             initial={{ opacity: 0, scale: 1.25 }}
-            animate={{ opacity: 0.5 * intensity, scale: 1.35 }}
+            // Kept low so the portrait behind the glass panels stays visible once a
+            // track starts playing, instead of washing out into a solid colour.
+            animate={{ opacity: 0.18 * intensity, scale: 1.35 }}
             exit={{ opacity: 0, scale: 1.45 }}
             transition={{ duration: 1.6, ease: [0.32, 0.72, 0, 1] }}
             className="absolute inset-0"
@@ -36,7 +38,7 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
               backgroundImage: `url(${cover})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
-              filter: 'blur(90px) saturate(190%) brightness(0.72)',
+              filter: 'blur(90px) saturate(140%) brightness(0.72)',
             }}
           />
         )}
@@ -47,7 +49,7 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
           isPlaying ? 'animate-drift' : ''
         }`}
         style={{
-          background: `radial-gradient(circle at 50% 50%, rgb(var(--art-1) / ${0.42 * intensity}), transparent 68%)`,
+          background: `radial-gradient(circle at 50% 50%, rgb(var(--art-1) / ${0.22 * intensity}), transparent 68%)`,
           filter: 'blur(30px)',
         }}
       />
@@ -56,7 +58,7 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
           isPlaying ? 'animate-drift' : ''
         }`}
         style={{
-          background: `radial-gradient(circle at 50% 50%, rgb(var(--art-2) / ${0.4 * intensity}), transparent 68%)`,
+          background: `radial-gradient(circle at 50% 50%, rgb(var(--art-2) / ${0.2 * intensity}), transparent 68%)`,
           filter: 'blur(30px)',
           animationDelay: '-8s',
           animationDuration: '31s',
@@ -67,7 +69,7 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
           isPlaying ? 'animate-drift' : ''
         }`}
         style={{
-          background: `radial-gradient(circle at 50% 50%, rgb(var(--art-3) / ${0.55 * intensity}), transparent 70%)`,
+          background: `radial-gradient(circle at 50% 50%, rgb(var(--art-3) / ${0.4 * intensity}), transparent 70%)`,
           filter: 'blur(30px)',
           animationDelay: '-16s',
           animationDuration: '27s',
@@ -75,7 +77,7 @@ export function AmbientBackdrop({ cover, isPlaying = true, intensity = 1 }) {
       />
 
       {/* Vignette + a faint grain so the huge gradients don't band on cheap panels. */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,rgba(0,0,0,0.72)_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_38%,rgba(0,0,0,0.62)_100%)]" />
       <div
         className="absolute inset-0 opacity-[0.035] mix-blend-overlay"
         style={{

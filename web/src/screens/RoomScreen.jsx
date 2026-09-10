@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { CoverArt, EmptyState, Modal, Switch, Tooltip, spring } from '../components/ui/Primitives.jsx';
 import { ListenerRail } from '../components/ListenerRail.jsx';
+import { RoomListeners } from '../components/RoomListeners.jsx';
+import { TrackSearch } from '../components/TrackSearch.jsx';
 import { NowPlaying } from '../components/NowPlaying.jsx';
 import { QueuePanel } from '../components/QueuePanel.jsx';
 import { ChatPanel } from '../components/ChatPanel.jsx';
@@ -353,15 +355,36 @@ export function RoomScreen({ room, identity, tracks, onTracksChanged, audio, rea
 
       {/* Explicit `minmax(0,1fr)` column even on mobile — without it the implicit
           grid track sizes to its content's max-width instead of the viewport,
-          letting the now-playing column render wider than the screen. */}
-      <div className="mx-auto grid w-full max-w-[1400px] flex-1 grid-cols-[minmax(0,1fr)] gap-6 px-4 py-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-8 lg:py-10">
+          letting the now-playing column render wider than the screen. Laptop
+          layout gains a third column for the listeners rail; mobile is untouched
+          since `hidden lg:flex` keeps that rail out of the layout entirely. */}
+      <div className="mx-auto grid w-full max-w-[1400px] flex-1 grid-cols-[minmax(0,1fr)] gap-6 px-4 py-7 sm:px-6 lg:grid-cols-[240px_minmax(0,1fr)_460px] lg:gap-8 lg:py-10">
+        {/* ------------------------------------------------------- listeners */}
+        <motion.aside
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.6, ease: [0.32, 0.72, 0, 1] }}
+          className="hidden lg:sticky lg:top-[96px] lg:block lg:h-[min(680px,calc(100svh-140px))] lg:min-h-[420px]"
+        >
+          <RoomListeners
+            listeners={room.listeners}
+            hostId={room.hostId}
+            youId={identity.id}
+            identity={identity}
+            onTracksChanged={onTracksChanged}
+          />
+        </motion.aside>
+
         {/* ------------------------------------------------------ now playing */}
         <motion.section
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: [0.32, 0.72, 0, 1] }}
-          className="flex items-start justify-center lg:items-center"
+          className="flex flex-col items-center gap-5 lg:items-stretch"
         >
+          <div className="hidden w-full lg:block">
+            <TrackSearch tracks={tracks} queue={room.queue} onQueue={room.addToQueue} />
+          </div>
           <NowPlaying
             item={room.currentItem}
             playback={room.playback}
@@ -390,7 +413,7 @@ export function RoomScreen({ room, identity, tracks, onTracksChanged, audio, rea
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6, delay: 0.1, ease: [0.32, 0.72, 0, 1] }}
-          className="glass glass-sheen flex h-[min(56svh,460px)] min-h-[320px] flex-col overflow-hidden rounded-panel lg:h-[min(680px,calc(100svh-140px))] lg:min-h-[420px] lg:sticky lg:top-[96px]"
+          className="flex h-[min(56svh,460px)] min-h-[320px] flex-col overflow-hidden rounded-panel border border-white/10 bg-transparent lg:h-[min(680px,calc(100svh-140px))] lg:min-h-[420px] lg:sticky lg:top-[96px]"
         >
           <div className="p-3 pb-0">
             <div className="flex gap-0.5 rounded-pill bg-black/25 p-0.5">

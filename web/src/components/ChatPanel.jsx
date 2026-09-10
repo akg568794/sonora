@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp } from 'lucide-react';
-import { Avatar, spring } from './ui/Primitives.jsx';
+import { ArrowDown, ArrowUp, MessageCircle } from 'lucide-react';
+import { Avatar, EmptyState, spring } from './ui/Primitives.jsx';
 import { formatClock } from '../lib/format.js';
 
 /** Consecutive messages from one person collapse into a single visual group. */
@@ -72,6 +72,7 @@ export function ChatPanel({ messages, onSend, identity, connected }) {
       </header>
 
       <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-4 py-1">
+        {groups.length === 0 && <EmptyState icon={MessageCircle} title="No messages yet">Start the conversation</EmptyState>}
         <AnimatePresence initial={false}>
           {groups.map((group) =>
             group.kind === 'system' ? (

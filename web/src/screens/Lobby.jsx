@@ -221,6 +221,10 @@ export function Lobby({ identity, onJoin, onCreate, joining }) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.12, ease: [0.32, 0.72, 0, 1] }}
           className="glass glass-sheen flex flex-col justify-between gap-5 rounded-panel p-6"
+          // The ambient backdrop's indigo blob sits under this side of the layout,
+          // reading much bluer through `.glass`'s saturate() than the rest of the
+          // page — this warms it back toward the crimson everything else uses.
+          style={{ backgroundImage: 'linear-gradient(160deg, rgb(var(--art-1) / 0.2), rgb(var(--art-1) / 0.1))' }}
         >
           <div>
             <div className="mb-3 grid h-11 w-11 place-items-center rounded-[15px] bg-white/10">
